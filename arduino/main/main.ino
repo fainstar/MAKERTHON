@@ -2,37 +2,62 @@
 #include <ESP8266HTTPClient.h>
 #include <SimpleDHT.h>
 #include <WiFiClient.h>
+#include <ArduinoJson.h>  
+
+
 
 const char* ssid = "Wifi4";
 const char* passphrase = "asdfghjkl";
 
-const char* apiUrl = "http://192.168.50.184:8000/i/local";  // 替换为你的目标API地址
+unsigned long DebugTime = 0;
+unsigned long DebugTemp = 100;  
 
 unsigned long RequestTime = 0;
 unsigned long RequestTemp = 5000;  
 
 unsigned long BaseSensorTemp = 0;
-unsigned long BaseSensorTime = 2000;  // 传感器读取的执行间隔
+unsigned long BaseSensorTime = 2000; 
 
 unsigned long AdvancedSensorTemp = 0;
-unsigned long AdvancedSensorTime = 1000;  // 传感器读取的执行间隔
+unsigned long AdvancedSensorTime = 1000;  
 
-int pinDHT11 = 16; //溫濕度
-int pinRain = 5;
-int pinHumi = 4;
+unsigned long ServerTemp = 0;
+unsigned long ServerTime = 1000; 
 
+
+const int button1Pin = 15;  // 按钮连接到数字引脚2
+
+const int pinDHT11 = 16; 
+const int pinRain = 5;
+const int pinHumi = 4;
+const int pinLed = 0;
+
+bool MainMode = 0;
+bool DEPL = 1;
 bool RainData = 0;
 int HumiData = 0;
 byte TempData = 0;
 byte SoilData = 0;
-
+bool controlValve = 0;
+bool autoDetect = 0;
+int tempMode = 0;
 SimpleDHT11 dht11;
 
+int lastButtonState = HIGH; 
+int buttonState = HIGH;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50; 
 
 void setup() {
+  WiFi.mode(WIFI_STA);
+  Serial.begin(115200);  
+  pinMode(LED_BUILTIN, OUTPUT); 
   pinMode(pinRain, INPUT);
   pinMode(pinHumi, INPUT);
-  Serial.begin(115200);
+  pinMode(pinLed, OUTPUT);
+  pinMode(button1Pin, INPUT); 
+
+
   WiFi.begin(ssid, passphrase);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
@@ -46,7 +71,7 @@ void setup() {
 
 void loop() {
   unsigned long MS = millis();
-
+  handleButton(button1Pin);
   // 执行传感器读取
   if (MS - BaseSensorTemp >= BaseSensorTime) {
     readSensorData();
@@ -65,12 +90,44 @@ void loop() {
     AdvancedSensorTemp = MS;
   }
 
-  // 在主循环中可以执行其他操作
+  // 读取下雨感測器
+  if (MS - AdvancedSensorTemp >= AdvancedSensorTime) {
+    readSensorData2();
+    AdvancedSensorTemp = MS;
+  }
+
+  if (MS - ServerTemp >= ServerTime) {
+    GetRequest();
+    Judge();
+    ServerTemp = MS;
+  }
+
+  if (MS - DebugTemp >= DebugTime) {
+    digitalWrite(LED_BUILTIN,DEPL);
+    if(DEPL ==1) DEPL = 0;
+    else DEPL = 1;
+    DebugTemp = MS;
+  }
+
 }
 
 void readSensorData2(){
   RainData = !digitalRead(pinRain);
-  HumiData = analogRead(pinHumi);
+  HumiData = 1023 - analogRead(pinHumi);
+}
+void Judge(){
+  Serial.print("led type:");
+  bool mode = 0;
+  if(tempMode == 3) mode = 0;
+  if(tempMode == 2) mode = 0;
+  if(tempMode == 0) mode = 1;
+  if(tempMode == 1){
+    if(RainData == 1 && SoilData < 800) mode = 0;
+    else mode = 1;
+  } 
+  if(MainMode == 1) mode = 0; 
+  digitalWrite(pinLed,mode); 
+  Serial.println(mode);
 }
 
 void readSensorData() {
@@ -81,46 +138,85 @@ void readSensorData() {
     return;
   }
 }
-
-#include <ArduinoJson.h>  // 包括 ArduinoJson 库
-
 void PostRequest() {
-  // 执行HTTP请求函数
   HTTPClient http;
-
-  // 创建一个WiFiClient实例，以便将其传递给HTTPClient
   WiFiClient client;
-
-  // 使用WiFiClient实例创建HTTP连接
+  String apiUrl = "http://49.213.238.75:8000/i/local";  
   http.begin(client, apiUrl);
-
-  // 设置HTTP请求头
   http.addHeader("Content-Type", "application/json");
-
-  // 创建一个 JSON 对象
-  DynamicJsonDocument jsonDoc(256);  // 选择合适的容量
-
-  // 添加要发送的数据到 JSON 对象
-  jsonDoc["humd"] = SoilData;
-  jsonDoc["temp"] = TempData;
+  DynamicJsonDocument jsonDoc(256);  
+  jsonDoc["humd"] = float(SoilData);
+  jsonDoc["temp"] = float(TempData);
   jsonDoc["elev"] = 500.0;
-  jsonDoc["pres"] = HumiData;
-
-  // 将 JSON 对象转换为 JSON 字符串
+  jsonDoc["pres"] = float(HumiData);
   String data;
   serializeJson(jsonDoc, data);
-
-  // 打印 JSON 数据
-  Serial.println(data);
-
+  // Serial.println(data);
   int httpCode = http.POST(data);
   if (httpCode > 0) {
     String payload = http.getString();
-    Serial.println("HTTP POST request successful");
-    Serial.println("Response: " + payload);
+    // Serial.println("HTTP POST request successful");
+    // Serial.println("Response: " + payload);
   } else {
-    Serial.println("HTTP POST request failed");
+    String temp = http.errorToString(httpCode).c_str();  // 获取HTTP错误信息
+    Serial.println("HTTP POST request failed. Error: " + temp);
+  }
+  http.end();
+}
+void GetRequest() {
+  HTTPClient http;
+  WiFiClient client;
+  String apiUrl = "http://49.213.238.75:8000/i/setting";  
+  http.begin(client, apiUrl);
+  http.addHeader("Content-Type", "application/json");
+  int httpCode = http.GET();
+  if (httpCode > 0) {
+    String payload = http.getString();
+    // Serial.println("HTTP GET request successful");
+    // Serial.println("Response: " + payload);
+    // 解析JSON响应
+    DynamicJsonDocument doc(256); 
+    DeserializationError error = deserializeJson(doc, payload);
+    // 检查是否解析成功
+    if (error) {
+      Serial.print("JSON解析失败: ");
+      Serial.println(error.c_str());
+      return;
+    }
+    // 提取变量的值
+    controlValve = doc["control_valve"];
+    autoDetect = doc["auto_detect"];
+    tempMode = int(controlValve) * 2 + int(autoDetect);
+    Serial.print("control_valve: ");
+    Serial.println(controlValve);
+    Serial.print("auto_detect: ");
+    Serial.println(autoDetect);
+    Serial.print("temp:");
+    Serial.println(tempMode);
+  } else {
+    String temp = http.errorToString(httpCode).c_str(); 
+    Serial.println("HTTP GET request failed. Error: " + temp);
+  }
+  http.end();
+}
+
+void handleButton(int pin) {
+  int reading = digitalRead(pin);
+  
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis();
   }
 
-  http.end();
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (reading != buttonState) {
+      buttonState = reading;
+
+      if (buttonState == LOW) {
+        Serial.println("Button pressed.");
+        if(MainMode == 0) MainMode = 1;
+        else MainMode = 0;
+      }
+    }
+  }
+  lastButtonState = reading;
 }
