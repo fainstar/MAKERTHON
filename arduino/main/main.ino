@@ -5,7 +5,7 @@
 const char* ssid = "Wifi4";
 const char* passphrase = "asdfghjkl";
 
-const char* apiUrl = "https://api.example.com/data";  // 替换为你的目标API地址
+const char* apiUrl = "http://127.0.0.1:8000/i/local/";  // 替换为你的目标API地址
 
 unsigned long RequestTime = 0;
 unsigned long RequestTemp = 5000;  
@@ -19,6 +19,11 @@ unsigned long AdvancedSensorTime = 1000;  // 传感器读取的执行间隔
 int pinDHT11 = 16; //溫濕度
 int pinRain = 5;
 int pinHumi = 4;
+
+bool RainData = 0;
+int HumiData = 0;
+byte TempData = 0;
+byte SoilData = 0;
 
 SimpleDHT11 dht11;
 
@@ -46,58 +51,58 @@ void loop() {
 
   // 执行API请求
   if (MS - RequestTime >= RequestTemp) {
-    performHttpRequest();
+    PostRequest();
     RequestTime = MS;
   }
 
   // 读取下雨感測器
   if (MS - AdvancedSensorTemp >= AdvancedSensorTime) {
-    int RainState = !digitalRead(pinRain);
-    int HumiState = analogRead(pinHumi);
-    Serial.print("Rain Sensor: ");
-    Serial.println(RainState);
-    Serial.print("Humi Sensor: ");
-    Serial.println(HumiState);
+    readSensorData2();
     AdvancedSensorTemp = MS;
   }
 
   // 在主循环中可以执行其他操作
 }
 
-
+void readSensorData2(){
+  RainData = !digitalRead(pinRain);
+  HumiData = analogRead(pinHumi);
+}
 
 void readSensorData() {
   // 读取传感器数据
   int err;
-  byte temperature = 0;
-  byte humidity = 0;
-
-  if ((err = dht11.read(pinDHT11, &temperature, &humidity, NULL)) != SimpleDHTErrSuccess) {
+  if ((err = dht11.read(pinDHT11, &TempData, &SoilData, NULL)) != SimpleDHTErrSuccess) {
     Serial.print("Read DHT11 failed, err="); Serial.print(err); Serial.println("SimpleDHT");
     return;
   }
-
-  Serial.print("Humidity: ");
-  Serial.print(humidity);
-  Serial.print("%  Temperature: ");
-  Serial.print(temperature);
-  Serial.println("°C");
 }
 
-void performHttpRequest() {
+void PostRequest() {
   // 执行HTTP请求函数
-  // HTTPClient http;
-  // http.begin(apiUrl);
+  HTTPClient http;
 
-  // int httpCode = http.GET();
-  // if (httpCode > 0) {
-  //   String payload = http.getString();
-  //   Serial.println("HTTP GET request successful");
-  //   Serial.println("Response: " + payload);
-  // } else {
-  //   Serial.println("HTTP GET request failed");
-  // }
+  // 创建一个WiFiClient实例，以便将其传递给HTTPClient
+  WiFiClient client;
 
-  // http.end();
-    Serial.println("API");
+  // 使用WiFiClient实例创建HTTP连接
+  http.begin(client, apiUrl);
+
+  // 设置HTTP请求头（如果需要）
+  http.addHeader("Content-Type", "application/json");  // 设置请求头为JSON格式
+
+  // 准备要发送的数据
+  String data = "{\"humd\": " + String(SoilData) + ", \"temp\": " + String(TempData) + ", \"elev\": " + String(500) + ", \"pres\": " + String(HumiData)+ "}";
+
+  int httpCode = http.POST(data);
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+    Serial.println("HTTP POST request successful");
+    Serial.println("Response: " + payload);
+  } else {
+    Serial.println("HTTP POST request failed");
+  }
+
+  http.end();
 }
