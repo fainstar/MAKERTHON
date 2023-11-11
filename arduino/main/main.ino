@@ -1,11 +1,12 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <SimpleDHT.h>
+#include <WiFiClient.h>
 
 const char* ssid = "Wifi4";
 const char* passphrase = "asdfghjkl";
 
-const char* apiUrl = "http://127.0.0.1:8000/i/local/";  // 替换为你的目标API地址
+const char* apiUrl = "http://192.168.50.184:8000/i/local";  // 替换为你的目标API地址
 
 unsigned long RequestTime = 0;
 unsigned long RequestTemp = 5000;  
@@ -38,6 +39,9 @@ void setup() {
     Serial.println("Connecting to WiFi...");
   }
   Serial.println("Connected to WiFi");
+  Serial.print("Local IP: ");
+  Serial.println(WiFi.localIP());
+
 }
 
 void loop() {
@@ -78,6 +82,8 @@ void readSensorData() {
   }
 }
 
+#include <ArduinoJson.h>  // 包括 ArduinoJson 库
+
 void PostRequest() {
   // 执行HTTP请求函数
   HTTPClient http;
@@ -88,14 +94,26 @@ void PostRequest() {
   // 使用WiFiClient实例创建HTTP连接
   http.begin(client, apiUrl);
 
-  // 设置HTTP请求头（如果需要）
-  http.addHeader("Content-Type", "application/json");  // 设置请求头为JSON格式
+  // 设置HTTP请求头
+  http.addHeader("Content-Type", "application/json");
 
-  // 准备要发送的数据
-  String data = "{\"humd\": " + String(SoilData) + ", \"temp\": " + String(TempData) + ", \"elev\": " + String(500) + ", \"pres\": " + String(HumiData)+ "}";
+  // 创建一个 JSON 对象
+  DynamicJsonDocument jsonDoc(256);  // 选择合适的容量
+
+  // 添加要发送的数据到 JSON 对象
+  jsonDoc["humd"] = SoilData;
+  jsonDoc["temp"] = TempData;
+  jsonDoc["elev"] = 500.0;
+  jsonDoc["pres"] = HumiData;
+
+  // 将 JSON 对象转换为 JSON 字符串
+  String data;
+  serializeJson(jsonDoc, data);
+
+  // 打印 JSON 数据
+  Serial.println(data);
 
   int httpCode = http.POST(data);
-
   if (httpCode > 0) {
     String payload = http.getString();
     Serial.println("HTTP POST request successful");
